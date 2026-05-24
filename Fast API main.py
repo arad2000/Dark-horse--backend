@@ -1,9 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
+import os
+import json
+from datetime import datetime
 from darkhorse_scorer import load_major_profiles, rank_majors
 
+# ------------------------------------------------------------
 # مدل‌های داده
+# ------------------------------------------------------------
 class MicroMotivesInput(BaseModel):
     tags: List[str] = Field(..., description="لیست تگ‌های انگیزشی کاربر")
 
@@ -38,16 +43,52 @@ class RecommendationOutput(BaseModel):
     score: float
     details: RecommendationDetail
 
+# مدل برای گزارش عدم تطابق
+class MismatchReport(BaseModel):
+    user_id: Optional[str] = None
+    top_score: float
+    mm_score: float
+    sjt_score: float
+    value_score: float
+    top_majors: List[str]
+
+# ------------------------------------------------------------
 # راه‌اندازی اپ
+# ------------------------------------------------------------
 app = FastAPI(title="رشد هوشمند - موتور اسب سیاه", version="1.0")
 
 # بارگذاری پروفایل رشته‌ها (مسیر فایل را در صورت نیاز اصلاح کنید)
 try:
     MAJOR_PROFILES = load_major_profiles("major_profiles_80.json")
+    print(f"✅ پروفایل رشته‌ها بارگذاری شد: {len(MAJOR_PROFILES)} رشته")
 except Exception as e:
-    print(f"خطا در بارگذاری پروفایل: {e}")
+    print(f"❌ خطا در بارگذاری پروفایل: {e}")
     MAJOR_PROFILES = {}
 
+# مسیر فایل برای ذخیره گزارش‌های عدم تطابق (در همان پوشه)
+MISMATCH_FILE = "mismatch_reports.json"
+
+def save_mismatch_report(report: dict):
+    """ذخیره گزارش در فایل JSON (برای MVP)"""
+    try:
+        # خواندن گزارش‌های قبلی
+        if os.path.exists(MISMATCH_FILE):
+            with open(MISMATCH_FILE, 'r', encoding='utf-8') as f:
+                reports = json.load(f)
+        else:
+            reports = []
+        # اضافه کردن گزارش جدید
+        reports.append(report)
+        # ذخیره مجدد
+        with open(MISMATCH_FILE, 'w', encoding='utf-8') as f:
+            json.dump(reports, f, ensure_ascii=False, indent=2)
+        print(f"📝 گزارش جدید ذخیره شد. تعداد کل: {len(reports)}")
+    except Exception as e:
+        print(f"⚠️ خطا در ذخیره گزارش: {e}")
+
+# ------------------------------------------------------------
+# اندپوینت‌ها
+# ------------------------------------------------------------
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "profiles_loaded": len(MAJOR_PROFILES)}
@@ -91,3 +132,11 @@ async def get_darkhorse_recommendations(request: DarkHorseRequest):
             )
         ))
     return results
+
+@app.post("/api/feedback/mismatch")
+async def report_mismatch(report: MismatchReport):
+    """دریافت گزارش عدم تطابق از فرانت‌اند"""
+    report_dict = report.dict()
+    report_dict["created_at"] = datetime.now().isoformat()
+    save_mismatch_report(report_dict)
+    return {"status": "ok", "message": "گزارش با موفقیت ثبت شد"}
